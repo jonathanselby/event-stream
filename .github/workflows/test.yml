@@ -15,14 +15,12 @@ jobs:
           go-version: '1.26.x'
           cache: false
 
-      - name: Resolve and verify dependencies
+      - name: Verify dependencies
         run: |
-          go mod tidy
+          go mod download
           go mod verify
-          echo '--- go.sum ---'
-          cat go.sum
 
-      - name: Start Kafka-compatible broker
+      - name: Start Kafka-compatible broker and provision test topics
         shell: bash
         run: |
           set -euo pipefail
@@ -37,12 +35,27 @@ jobs:
               --default-log-level=warn
           for i in $(seq 1 30); do
             if docker exec event-stream-redpanda rpk cluster info >/dev/null 2>&1; then
-              exit 0
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              docker logs event-stream-redpanda
+              exit 1
             fi
             sleep 1
           done
-          docker logs event-stream-redpanda
-          exit 1
+
+          topics=(
+            event-stream-testindependentconsumerreadsevent
+            event-stream-testreaderconsumesindependentevent
+            event-stream-testreaddoesnotimplicitlycommit
+            event-stream-testkafkapublishreceiptandfailedpublish
+            event-stream-testkafkapartitionordering
+            event-stream-testmalformedenveloperefusedwithoutimplicitcommit
+            event-stream-testconsumergroupoffsets
+          )
+          for topic in "${topics[@]}"; do
+            docker exec event-stream-redpanda rpk topic create "$topic" --partitions 1 --replicas 1
+          done
 
       - name: Format contract
         shell: bash
