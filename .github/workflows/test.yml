@@ -80,9 +80,10 @@ jobs:
 
       - name: Build examples
         run: |
-          go build ./examples/embedded
-          go build ./examples/kafka-publish
-          go build ./examples/kafka-read
+          mkdir -p bin
+          go build -o bin/example-embedded ./examples/embedded
+          go build -o bin/example-kafka-publish ./examples/kafka-publish
+          go build -o bin/example-kafka-read ./examples/kafka-read
 
       - name: Version contract
         run: go test -run '^TestVersionMatchesFile$' .
