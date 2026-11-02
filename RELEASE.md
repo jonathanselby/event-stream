@@ -1,6 +1,7 @@
 # Event Stream — Release Checklist
 
-**Implementation evidence commit:** `ba07d158c9789a105f2a63c746719d1d6683b493`
+**Implementation evidence commit:** `ba07d158c9789a105f2a63c746719d1d6683b493`  
+**Release-gate candidate:** `7db5ce91f8ad843984cf7599864b51fd4758540c`
 
 ## Source/version
 
