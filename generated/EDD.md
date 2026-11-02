@@ -1,7 +1,7 @@
 # Event Stream — Generated Engineering Design Evidence
 
 **Source:** implementation recovery  
-**Evidence commit:** `{{EVIDENCE_COMMIT}}`
+**Evidence commit:** `ba07d158c9789a105f2a63c746719d1d6683b493`
 
 ## Recovered component boundary
 
@@ -95,7 +95,7 @@ Tests cover:
 - core envelope and payload bounds;
 - embedded fan-out, maximum subscriptions, back-pressure, no silent discard and shutdown;
 - Kafka route validation and codec round trip;
-- independent producer/consumer interoperability through a Kafka-protocol fake broker;
+- independent producer/consumer interoperability against a real Kafka-compatible broker in CI;
 - publication receipts and missing-route failure;
 - keyed partition ordering;
 - explicit commit and consumer-group resume;

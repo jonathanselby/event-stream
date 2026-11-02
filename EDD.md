@@ -269,7 +269,7 @@ No database, persistent queue, retry store, deduplication store, workflow engine
 
 Tests prove envelope validation, payload bounds, embedded fan-out/back-pressure/no-discard, exact routing, wire-codec round trip, independent Kafka producer/consumer interoperability, Kafka receipt contents, failed publication behaviour, keyed partition ordering, consumer groups, explicit commit, malformed-envelope handling and shutdown.
 
-Kafka integration tests use `franz-go/pkg/kfake`, an in-memory Kafka protocol broker, while independent producer/consumer fixtures use raw `kgo.Client` rather than Event Stream adapters.
+Kafka integration tests run against a real Kafka-compatible broker in CI. Independent producer/consumer fixtures use raw `kgo.Client` rather than Event Stream adapters.
 
 CI adds Go 1.26 `gofmt`, vet, race tests, native package/example build, exact version and Linux ARM64 cross-build.
 

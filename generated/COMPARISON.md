@@ -1,6 +1,6 @@
 # Event Stream — Design / Implementation Comparison
 
-**Implementation evidence commit:** `{{EVIDENCE_COMMIT}}`  
+**Implementation evidence commit:** `ba07d158c9789a105f2a63c746719d1d6683b493`  
 **Generated:** 2026-11-02
 
 | Design area | Hand-written intent | Recovered implementation | Assessment |
