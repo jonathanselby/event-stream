@@ -15,10 +15,12 @@ jobs:
           go-version: '1.26.x'
           cache: false
 
-      - name: Download dependencies
+      - name: Resolve and verify dependencies
         run: |
-          go mod download
+          go mod tidy
           go mod verify
+          echo '--- go.sum ---'
+          cat go.sum
 
       - name: Start Kafka-compatible broker
         shell: bash
