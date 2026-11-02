@@ -1,5 +1,7 @@
 # Event Stream — Release Checklist
 
+**Implementation evidence commit:** `ba07d158c9789a105f2a63c746719d1d6683b493`
+
 ## Source/version
 
 - [ ] `VERSION` and `eventstream.Version` agree.
