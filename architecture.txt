@@ -1,0 +1,29 @@
+EVENT STREAM V0.1
+=================
+
+                         APPLICATION
+                              |
+                              v
+                            Event
+                              |
+                         Publisher
+                              |
+                   +----------+----------+
+                   |                     |
+                   v                     v
+            EMBEDDED STREAM         KAFKA PRODUCER
+                   |                     |
+       bounded ingress/fan-out            v
+                   |                    KAFKA
+            +------+------+               |
+            |             |        +------+------+
+            v             v        |             |
+       subscriber A  subscriber B  v             v
+                               Kafka reader   external consumers
+                                                / Flink / workflow
+
+BOUNDARY
+--------
+Event Stream: validate envelope, bound resources, transport, receipt/position.
+Outside: durable business state, business retry, transformation, workflow,
+deduplication/idempotency, stream processing, Kafka administration.

@@ -1,0 +1,52 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: false
+
+      - name: Download dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Format contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "$files"
+            while read -r file; do
+              [ -z "$file" ] || gofmt -d "$file"
+            done <<< "$files"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Race tests
+        run: go test -race -count=1 ./...
+
+      - name: Build examples
+        run: |
+          go build ./examples/embedded
+          go build ./examples/kafka-publish
+          go build ./examples/kafka-read
+
+      - name: Version contract
+        run: go test -run '^TestVersionMatchesFile$' .
+
+      - name: Linux ARM64 build
+        run: GOOS=linux GOARCH=arm64 go build ./...
