@@ -20,6 +20,28 @@ jobs:
           go mod download
           go mod verify
 
+      - name: Start Kafka-compatible broker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name event-stream-redpanda \
+            -p 19092:19092 \
+            docker.redpanda.com/redpandadata/redpanda:v26.2.6 \
+            redpanda start \
+              --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092 \
+              --advertise-kafka-addr internal://event-stream-redpanda:9092,external://localhost:19092 \
+              --mode dev-container \
+              --smp 1 \
+              --default-log-level=warn
+          for i in $(seq 1 30); do
+            if docker exec event-stream-redpanda rpk cluster info >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs event-stream-redpanda
+          exit 1
+
       - name: Format contract
         shell: bash
         run: |
@@ -37,6 +59,8 @@ jobs:
         run: go vet ./...
 
       - name: Race tests
+        env:
+          KAFKA_BROKER: 127.0.0.1:19092
         run: go test -race -count=1 ./...
 
       - name: Build examples

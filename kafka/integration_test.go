@@ -4,27 +4,48 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	eventstream "github.com/jonathanselby/event-stream"
-	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-func newFakeCluster(t *testing.T, topic string, partitions int) *kfake.Cluster {
+func testBroker(t *testing.T) string {
 	t.Helper()
-	cluster, err := kfake.NewCluster(kfake.SeedTopics(partitions, topic))
+	broker := strings.TrimSpace(os.Getenv("KAFKA_BROKER"))
+	if broker == "" {
+		t.Skip("KAFKA_BROKER not configured; Kafka integration is exercised in CI")
+	}
+	return broker
+}
+
+func testTopic(t *testing.T) string {
+	t.Helper()
+	name := strings.ToLower(t.Name())
+	name = strings.NewReplacer("/", "-", "_", "-", " ", "-").Replace(name)
+	return "event-stream-" + name
+}
+
+func independentProducer(t *testing.T, broker string) *kgo.Client {
+	t.Helper()
+	client, err := kgo.NewClient(kgo.SeedBrokers(broker))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(cluster.Close)
-	return cluster
+	t.Cleanup(client.Close)
+	return client
 }
 
 func TestIndependentConsumerReadsEvent(t *testing.T) {
-	cluster := newFakeCluster(t, "case-events", 1)
-	publisher, err := NewPublisher(PublisherConfig{Brokers: cluster.ListenAddrs(), Routes: []Route{{Type: "case.approved", Version: "1", Topic: "case-events"}}})
+	broker := testBroker(t)
+	topic := testTopic(t)
+	publisher, err := NewPublisher(PublisherConfig{
+		Brokers: []string{broker},
+		Routes:  []Route{{Type: "case.approved", Version: "1", Topic: topic}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,17 +56,21 @@ func TestIndependentConsumerReadsEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Destination != "case-events" || receipt.Partition != 0 || receipt.Offset < 0 {
+	if receipt.Destination != topic || receipt.Partition < 0 || receipt.Offset < 0 {
 		t.Fatalf("unexpected receipt: %#v", receipt)
 	}
 
-	client, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...), kgo.ConsumeTopics("case-events"), kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()))
+	client, err := kgo.NewClient(
+		kgo.SeedBrokers(broker),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeStartOffset(kgo.NewOffset().AtStart()),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	fetches := client.PollRecords(ctx, 1)
 	if errs := fetches.Errors(); len(errs) > 0 {
@@ -65,24 +90,25 @@ func TestIndependentConsumerReadsEvent(t *testing.T) {
 }
 
 func TestReaderConsumesIndependentEvent(t *testing.T) {
-	cluster := newFakeCluster(t, "case-events", 1)
-	direct, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer direct.Close()
+	broker := testBroker(t)
+	topic := testTopic(t)
+	direct := independentProducer(t, broker)
 	want := kafkaTestEvent()
-	if err := direct.ProduceSync(context.Background(), encodeRecord("case-events", want)).FirstErr(); err != nil {
+	if err := direct.ProduceSync(context.Background(), encodeRecord(topic, want)).FirstErr(); err != nil {
 		t.Fatal(err)
 	}
 
-	reader, err := NewReader(ReaderConfig{Brokers: cluster.ListenAddrs(), Topics: []string{"case-events"}, GroupID: "reader-independent"})
+	reader, err := NewReader(ReaderConfig{
+		Brokers: []string{broker},
+		Topics:  []string{topic},
+		GroupID: "reader-independent-" + topic,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reader.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	delivery, err := reader.Read(ctx)
 	if err != nil {
@@ -94,21 +120,18 @@ func TestReaderConsumesIndependentEvent(t *testing.T) {
 }
 
 func TestReadDoesNotImplicitlyCommit(t *testing.T) {
-	cluster := newFakeCluster(t, "case-events", 1)
-	direct, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer direct.Close()
-	if err := direct.ProduceSync(context.Background(), encodeRecord("case-events", kafkaTestEvent())).FirstErr(); err != nil {
+	broker := testBroker(t)
+	topic := testTopic(t)
+	direct := independentProducer(t, broker)
+	if err := direct.ProduceSync(context.Background(), encodeRecord(topic, kafkaTestEvent())).FirstErr(); err != nil {
 		t.Fatal(err)
 	}
 
-	reader, err := NewReader(ReaderConfig{Brokers: cluster.ListenAddrs(), Topics: []string{"case-events"}, GroupID: "explicit-commit"})
+	reader, err := NewReader(ReaderConfig{Brokers: []string{broker}, Topics: []string{topic}, GroupID: "explicit-commit-" + topic})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	first, err := reader.Read(ctx)
 	if err != nil {
@@ -128,8 +151,12 @@ func TestReadDoesNotImplicitlyCommit(t *testing.T) {
 }
 
 func TestKafkaPublishReceiptAndFailedPublish(t *testing.T) {
-	cluster := newFakeCluster(t, "case-events", 1)
-	publisher, err := NewPublisher(PublisherConfig{Brokers: cluster.ListenAddrs(), Routes: []Route{{Type: "case.approved", Version: "1", Topic: "case-events"}}})
+	broker := testBroker(t)
+	topic := testTopic(t)
+	publisher, err := NewPublisher(PublisherConfig{
+		Brokers: []string{broker},
+		Routes:  []Route{{Type: "case.approved", Version: "1", Topic: topic}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +166,7 @@ func TestKafkaPublishReceiptAndFailedPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if receipt.Transport != eventstream.TransportKafka || receipt.Offset < 0 {
+	if receipt.Transport != eventstream.TransportKafka || receipt.Destination != topic || receipt.Partition < 0 || receipt.Offset < 0 {
 		t.Fatalf("bad receipt: %#v", receipt)
 	}
 
@@ -151,8 +178,12 @@ func TestKafkaPublishReceiptAndFailedPublish(t *testing.T) {
 }
 
 func TestKafkaPartitionOrdering(t *testing.T) {
-	cluster := newFakeCluster(t, "ordered", 2)
-	publisher, err := NewPublisher(PublisherConfig{Brokers: cluster.ListenAddrs(), Routes: []Route{{Type: "ordered", Version: "1", Topic: "ordered"}}})
+	broker := testBroker(t)
+	topic := testTopic(t)
+	publisher, err := NewPublisher(PublisherConfig{
+		Brokers: []string{broker},
+		Routes:  []Route{{Type: "ordered", Version: "1", Topic: topic}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,25 +210,29 @@ func TestKafkaPartitionOrdering(t *testing.T) {
 }
 
 func TestMalformedEnvelopeRefusedWithoutImplicitCommit(t *testing.T) {
-	cluster := newFakeCluster(t, "case-events", 1)
-	direct, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
-	if err != nil {
-		t.Fatal(err)
+	broker := testBroker(t)
+	topic := testTopic(t)
+	direct := independentProducer(t, broker)
+	bad := &kgo.Record{
+		Topic: topic,
+		Key:   []byte("case-42"),
+		Value: []byte(`{"approved":true}`),
+		Headers: []kgo.RecordHeader{
+			{Key: headerSpecVersion, Value: []byte("1.0")},
+			{Key: headerID, Value: []byte("evt-bad")},
+		},
 	}
-	defer direct.Close()
-
-	bad := &kgo.Record{Topic: "case-events", Key: []byte("case-42"), Value: []byte(`{"approved":true}`), Headers: []kgo.RecordHeader{{Key: headerSpecVersion, Value: []byte("1.0")}, {Key: headerID, Value: []byte("evt-bad")}}}
 	if err := direct.ProduceSync(context.Background(), bad).FirstErr(); err != nil {
 		t.Fatal(err)
 	}
 
-	reader, err := NewReader(ReaderConfig{Brokers: cluster.ListenAddrs(), Topics: []string{"case-events"}, GroupID: "malformed"})
+	reader, err := NewReader(ReaderConfig{Brokers: []string{broker}, Topics: []string{topic}, GroupID: "malformed-" + topic})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reader.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	first, err := reader.Read(ctx)
 	if err == nil {
@@ -216,27 +251,23 @@ func TestMalformedEnvelopeRefusedWithoutImplicitCommit(t *testing.T) {
 }
 
 func TestConsumerGroupOffsets(t *testing.T) {
-	cluster := newFakeCluster(t, "case-events", 1)
-	direct, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer direct.Close()
-
+	broker := testBroker(t)
+	topic := testTopic(t)
+	direct := independentProducer(t, broker)
 	for i := 1; i <= 2; i++ {
 		e := kafkaTestEvent()
 		e.ID = fmt.Sprintf("evt-%d", i)
-		if err := direct.ProduceSync(context.Background(), encodeRecord("case-events", e)).FirstErr(); err != nil {
+		if err := direct.ProduceSync(context.Background(), encodeRecord(topic, e)).FirstErr(); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	cfg := ReaderConfig{Brokers: cluster.ListenAddrs(), Topics: []string{"case-events"}, GroupID: "offset-restart"}
+	cfg := ReaderConfig{Brokers: []string{broker}, Topics: []string{topic}, GroupID: "offset-restart-" + topic}
 	reader, err := NewReader(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	first, err := reader.Read(ctx)
 	if err != nil {
 		cancel()
@@ -260,7 +291,7 @@ func TestConsumerGroupOffsets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader2.Close()
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel2()
 	second, err := reader2.Read(ctx2)
 	if err != nil {

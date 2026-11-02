@@ -1,30 +1,49 @@
 name: release-tag
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [test]
+    types: [completed]
 
 permissions:
   contents: write
 
 jobs:
   tag-version:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
-      - name: Tag VERSION if missing
+
+      - name: Tag tested VERSION
         shell: bash
         run: |
           set -euo pipefail
           version=$(tr -d '[:space:]' < VERSION)
           tag="v${version}"
+          tested_sha="${{ github.event.workflow_run.head_sha }}"
           git fetch --tags --force
           if git rev-parse "$tag" >/dev/null 2>&1; then
-            exit 0
+            target=$(git rev-list -n 1 "$tag")
+            if [ "$target" = "$tested_sha" ]; then
+              exit 0
+            fi
+            # V0.1.0 was initially tagged before the release gate was hardened.
+            # Repair only that known candidate; later releases never move tags.
+            if [ "$tag" = "v0.1.0" ] && [ "$target" = "b2f0b405d92e304ff73d90bf34ade6568561f575" ]; then
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              git tag -fa "$tag" "$tested_sha" -m "$tag"
+              git push --force origin "$tag"
+              exit 0
+            fi
+            echo "$tag already exists at $target; refusing to move an established release tag"
+            exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "$tag" -m "$tag"
+          git tag -a "$tag" "$tested_sha" -m "$tag"
           git push origin "$tag"
